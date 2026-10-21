@@ -1,0 +1,5 @@
+aiogram>=3.13,<4
+SQLAlchemy>=2.0,<2.1
+python-dotenv>=1.0
+tzdata
+pytest>=8
