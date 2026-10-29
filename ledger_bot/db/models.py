@@ -26,6 +26,8 @@ class Service(Base):
     calc_type: Mapped[str] = mapped_column(String(16))
     unit: Mapped[str] = mapped_column(String(24))
     price_minor: Mapped[int]
+    # 2 = двусторонняя печать: при заказе вводят страницы, бот делит на 2 (вверх) и считает листы
+    pages_per_sheet: Mapped[int] = mapped_column(default=1, server_default="1")
     is_active: Mapped[bool] = mapped_column(default=True)
     is_archived: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -40,6 +42,7 @@ class ServiceVariant(Base):
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
     name: Mapped[str] = mapped_column(String(80))
     price_minor: Mapped[int]
+    pages_per_sheet: Mapped[int] = mapped_column(default=1, server_default="1")
     is_active: Mapped[bool] = mapped_column(default=True)
     service: Mapped[Service] = relationship(back_populates="variants")
 
@@ -138,3 +141,27 @@ class Transaction(Base):
     voided_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class Attachment(Base):
+    """Файл заказа (kind=file) или чек оплаты (kind=receipt).
+
+    Сам файл на сервере НЕ хранится: в базе только ссылка Telegram (file_id) и имя.
+    Через N дней ссылка стирается (file_id = NULL, purged_at заполняется), а имя и дата остаются.
+    """
+    __tablename__ = "attachments"
+    __table_args__ = (CheckConstraint("(order_id IS NULL) != (payment_id IS NULL)"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("orders.id"), index=True)
+    payment_id: Mapped[Optional[int]] = mapped_column(ForeignKey("payments.id"), index=True)
+    media: Mapped[str] = mapped_column(String(8))  # document | photo
+    file_id: Mapped[Optional[str]] = mapped_column(Text)
+    unique_id: Mapped[Optional[str]] = mapped_column(String(64))
+    file_name: Mapped[Optional[str]] = mapped_column(String(200))
+    size: Mapped[Optional[int]]
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    purged_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    @property
+    def kind(self) -> str:
+        return "file" if self.order_id is not None else "receipt"

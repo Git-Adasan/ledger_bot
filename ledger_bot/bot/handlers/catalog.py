@@ -77,6 +77,7 @@ async def show_service(event, sid):
     else:
         rows = [[("Название", f"cg:ed:name:{sid}"), ("Цена", f"cg:ed:price:{sid}")],
                 [("Единица", f"cg:ed:unit:{sid}"), ("Способ расчёта", f"cg:calc:{sid}")],
+                [("Двусторонняя: вкл/выкл", f"cg:pp:{sid}")],
                 [("Категория", f"cg:mv:{sid}"), ("Варианты", f"cg:vr:{sid}")],
                 [("Отключить" if active else "Включить", f"cg:tg:{sid}"), ("В архив", f"cg:ar:{sid}")],
                 [("Назад", f"cg:cat:{cid}")]]
@@ -100,6 +101,16 @@ async def service_state(cb: CallbackQuery, state: FSMContext):
             cat.archive_service(s, sid)
         else:
             cat.restore_service(s, sid)
+    await show_service(cb, sid)
+
+
+@router.callback_query(F.data.startswith("cg:pp:"))
+async def toggle_duplex(cb: CallbackQuery, state: FSMContext):
+    """Вкл: при заказе вводят страницы, бот делит на 2 и умножает на цену листа."""
+    sid = int(cb.data.split(":")[2])
+    with session_scope() as s:
+        cur = cat.get_service(s, sid).pages_per_sheet
+        cat.update_service(s, sid, pages_per_sheet=1 if cur > 1 else 2)
     await show_service(cb, sid)
 
 
@@ -187,8 +198,11 @@ async def show_variant(event, vid):
     with session_scope() as s:
         v = cat.get_variant(s, vid)
         text = f"{v.name}\nЦена: {price_label(v.service, v.price_minor)}\nСтатус: {'включён' if v.is_active else 'отключён'}"
+        if v.pages_per_sheet > 1:
+            text += f"\nДвусторонняя: вводятся страницы, {v.pages_per_sheet} стр. на лист"
         sid, active = v.service_id, v.is_active
     await show(event, text, ikb([[("Название", f"cg:ve:name:{vid}"), ("Цена", f"cg:ve:price:{vid}")],
+                                 [("Двусторонняя: вкл/выкл", f"cg:vp:{vid}")],
                                  [("Отключить" if active else "Включить", f"cg:vt:{vid}")],
                                  [("Назад", f"cg:vr:{sid}")]]))
 
@@ -196,6 +210,15 @@ async def show_variant(event, vid):
 @router.callback_query(F.data.startswith("cg:vv:"))
 async def variant_card(cb: CallbackQuery, state: FSMContext):
     await show_variant(cb, int(cb.data.split(":")[2]))
+
+
+@router.callback_query(F.data.startswith("cg:vp:"))
+async def variant_duplex(cb: CallbackQuery, state: FSMContext):
+    vid = int(cb.data.split(":")[2])
+    with session_scope() as s:
+        cur = cat.get_variant(s, vid).pages_per_sheet
+        cat.update_variant(s, vid, pages_per_sheet=1 if cur > 1 else 2)
+    await show_variant(cb, vid)
 
 
 @router.callback_query(F.data.startswith("cg:vt:"))

@@ -8,8 +8,8 @@ from aiogram.types import CallbackQuery, Message
 
 from ...db.session import session_scope
 from ...money import fmt_money, parse_qty
-from ...services import catalog, clients as client_svc, orders as order_svc
-from ...services.calc import CALC_TYPES, validate_qty
+from ...services import attachments, catalog, clients as client_svc, orders as order_svc
+from ...services.calc import CALC_TYPES
 from ..common import show
 from ..format import line_text, order_text, price_label
 from ..keyboards import CANCEL, ikb
@@ -147,6 +147,7 @@ async def _chosen(cb, state, sid, vid):
     with session_scope() as s:
         sv = catalog.get_service(s, sid)
         ct, unit = sv.calc_type, sv.unit
+        pps = catalog.pages_per_sheet(sv, catalog.get_variant(s, vid) if vid else None)
     if ct == "fixed":
         items = data["items"] + [{"sid": sid, "vid": vid, "qty": 1000}]
         await state.update_data(items=items)
@@ -154,6 +155,10 @@ async def _chosen(cb, state, sid, vid):
         return
     await state.update_data(pending={"sid": sid, "vid": vid})
     await state.set_state(OrderFlow.qty)
+    if pps > 1:
+        await show(cb, f"Сколько страниц? Целое число. Я сам поделю на {pps} (нечётная страница "
+                       f"займёт целый лист) и умножу на цену листа.", ikb([CANCEL]))
+        return
     hint = "можно дробное, например 1.5" if CALC_TYPES[ct].fraction else "целое число"
     await show(cb, f"Сколько ({unit})? {hint}", ikb([CANCEL]))
 
@@ -163,8 +168,9 @@ async def got_qty(message: Message, state: FSMContext):
     data = await state.get_data()
     qty = parse_qty(message.text)
     p = data["pending"]
-    with session_scope() as s:
-        validate_qty(catalog.get_service(s, p["sid"]).calc_type, qty)
+    with session_scope() as s:  # заодно проверяет страницы → листы (ошибка оставляет ввод открытым)
+        order_svc.pages_to_sheets(catalog.get_service(s, p["sid"]),
+                                  catalog.get_variant(s, p["vid"]) if p["vid"] else None, qty)
     await state.update_data(items=data["items"] + [{"sid": p["sid"], "vid": p["vid"], "qty": qty}],
                             pending=None)
     await state.set_state(None)
@@ -184,16 +190,26 @@ async def draft_actions(cb: CallbackQuery, state: FSMContext):
     await _show_pick(cb, state)
 
 
+async def show_confirm(event, state: FSMContext):
+    data = await state.get_data()
+    with session_scope() as s:
+        text = _draft_text(s, data)
+    files = data.get("files") or []
+    if files:
+        text += "\n\nФайлов к заказу: " + str(len(files))
+    await show(event, text + "\n\nОформить заказ?", ikb([
+        [("Подтвердить", "od:ok")],
+        [("Прикрепить файл" if not files else "Прикрепить ещё файл", "fl:draft")],
+        [("Добавить ещё", "od:more"), ("Отмена", "x:cancel")]]))
+
+
 @router.callback_query(F.data == "od:done")
 async def confirm_screen(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     if data.get("mode") != "order" or not data.get("items"):
         await cb.answer("Нет позиций.", show_alert=True)
         return
-    with session_scope() as s:
-        text = _draft_text(s, data)
-    await show(cb, text + "\n\nОформить заказ?", ikb([
-        [("Подтвердить", "od:ok")], [("Добавить ещё", "od:more"), ("Отмена", "x:cancel")]]))
+    await show_confirm(cb, state)
 
 
 @router.callback_query(F.data == "od:ok")
@@ -205,9 +221,14 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     with session_scope() as s:
         order, created = order_svc.create_order(
             s, items=data["items"], client_id=data.get("client_id"), key=data["key"])
+        saved = 0
+        if created:  # файлы из черновика сохраняются в той же транзакции, что и заказ
+            for fl in data.get("files") or []:
+                saved += attachments.add(s, order_id=order.id, **fl)[1]
         text = order_text(s, order)
         oid, has_client = order.id, order.client_id is not None
     await state.clear()
     rows = [[("Принять оплату", f"pay:o:{oid}")]] if has_client else []
+    rows.append([("Прикрепить файл", f"fl:ao:{oid}")])
     await show(cb, ("Заказ создан.\n\n" if created else "Заказ уже был создан.\n\n") + text,
-               ikb(rows) if rows else None)
+               ikb(rows))

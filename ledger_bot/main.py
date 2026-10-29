@@ -12,12 +12,12 @@ from pathlib import Path
 
 from .autobackup import autosend_loop
 from .bot.access import OwnerOnly
-from .bot.handlers import catalog, clients, finance, menu, orders, payments, settings
+from .bot.handlers import catalog, clients, files, finance, menu, orders, payments, settings
 from .config import load_config
 from .db import changes
 from .db.session import init_db, session_scope
 from .errors import ServiceError
-from .services import backup, catalog as catalog_svc
+from .services import attachments, backup, catalog as catalog_svc
 
 log = logging.getLogger("ledger_bot")
 
@@ -26,7 +26,7 @@ def build_dispatcher(owner_ids) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.update.outer_middleware(OwnerOnly(owner_ids))
     for r in (menu.router, orders.router, clients.router, payments.router,
-              catalog.router, finance.router, settings.router):
+              catalog.router, finance.router, settings.router, files.router):
         dp.include_router(r)  # menu первым: кнопки меню прерывают любой ввод
     dp.errors.register(on_error)
     return dp
@@ -76,6 +76,23 @@ async def backup_loop(db, directory):
         await asyncio.sleep(24 * 3600)
 
 
+def _purge_files(days: int) -> int:
+    with session_scope() as s:
+        return attachments.purge_expired(s, days)
+
+
+async def purge_loop(days: int):
+    """Раз в 6 часов стирает ссылки на файлы старше срока хранения (сами файлы на сервере не лежат)."""
+    while True:
+        try:
+            n = await asyncio.to_thread(_purge_files, days)
+            if n:
+                log.info("Удалены ссылки на старые файлы: %s", n)
+        except Exception:
+            log.exception("Очистка старых файлов не удалась")
+        await asyncio.sleep(6 * 3600)
+
+
 async def main():
     logging.basicConfig(level=logging.INFO)
     cfg = load_config()
@@ -85,10 +102,12 @@ async def main():
         catalog_svc.seed_defaults(s)
     changes.clear()  # стартовые данные — не повод отправлять копию
     settings.CFG.update(db=cfg.database_path, backups=cfg.backup_dir)
+    attachments.RETENTION_DAYS = cfg.file_retention_days
     bot = Bot(cfg.bot_token)
     dp = build_dispatcher(cfg.owner_ids)
     task = asyncio.create_task(backup_loop(cfg.database_path, cfg.backup_dir))
     send_task = asyncio.create_task(autosend_loop(bot, cfg.owner_ids, cfg.database_path, cfg.backup_dir))
+    purge_task = asyncio.create_task(purge_loop(cfg.file_retention_days))
     if fresh:
         for oid in cfg.owner_ids:
             try:
@@ -110,6 +129,7 @@ async def main():
     finally:
         task.cancel()
         send_task.cancel()
+        purge_task.cancel()
         if runner:
             await runner.cleanup()
 

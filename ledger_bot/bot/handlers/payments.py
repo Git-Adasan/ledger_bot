@@ -154,9 +154,11 @@ async def pay_ok(cb: CallbackQuery, state: FSMContext):
         debt = balance.client_debt(s, data["cid"])
         credit = res.credit_after
         dup = res.duplicate
+        pid = res.payment.id
     await state.clear()
     text = ("Эта оплата уже была записана.\n" if dup else "Оплата принята.\n") + "\n".join(lines)
     text += f"\n\nОстаток долга клиента: {fmt_money(debt)}"
     if credit > 0:
         text += f"\nПереплата: {fmt_money(credit)}"
-    await show(cb, text)
+    await show(cb, text + "\n\nМожно сохранить чек: нажмите кнопку и пришлите скриншот или PDF.",
+               ikb([[("Прикрепить чек", f"fl:rc:{pid}")]]))

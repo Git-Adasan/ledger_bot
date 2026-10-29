@@ -169,6 +169,7 @@ async def order_card(cb: CallbackQuery, state: FSMContext):
     rows = []
     if active and debt > 0:
         rows.append([("Принять оплату", f"pay:o:{oid}"), ("Списать долг", f"cl:wo:{oid}")])
+    rows.append([("Прикрепить файл", f"fl:ao:{oid}"), ("Показать файлы и чеки", f"fl:show:{oid}")])
     if active:
         rows.append([("Отменить заказ", f"cl:cx:{oid}")])
     rows.append([("Назад", f"cl:o:{cid}" if cid else "x:cancel")])

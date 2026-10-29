@@ -10,7 +10,7 @@ from aiogram.types import Chat, Message, Update, User
 
 from ledger_bot.db.models import Client, Order, Payment, Transaction
 from ledger_bot.db.session import session_scope
-from ledger_bot.bot.handlers import catalog, clients, finance, menu, orders, payments, settings
+from ledger_bot.bot.handlers import catalog, clients, files, finance, menu, orders, payments, settings
 from ledger_bot.main import build_dispatcher
 from ledger_bot.services import balance, clients as client_svc
 
@@ -43,7 +43,7 @@ class Harness:
     def __init__(self, owner_ids=(OWNER,)):
         self.session = FakeSession()
         self.bot = Bot("123:ABC", session=self.session)
-        for r in (menu, orders, clients, payments, catalog, finance, settings):
+        for r in (menu, orders, clients, payments, catalog, finance, settings, files):
             r.router._parent_router = None  # роутеры — модульные синглтоны; в тестах строим диспетчер заново
         self.dp = build_dispatcher(owner_ids)
         self.n = 0
@@ -69,6 +69,16 @@ class Harness:
         await self._feed({"callback_query": {
             "id": str(self.n), "from": self._user(uid), "chat_instance": "c", "data": data,
             "message": self._msg(uid, text="m")}})
+
+    async def send_file(self, name="work.pdf", uid=OWNER, photo=False):
+        self.n += 1
+        if photo:
+            extra = {"photo": [{"file_id": f"ph{self.n}", "file_unique_id": f"uph{self.n}",
+                                "width": 90, "height": 90, "file_size": 1000}]}
+        else:
+            extra = {"document": {"file_id": f"doc{self.n}", "file_unique_id": f"u-{name}",  # у одного файла в Telegram один unique_id
+                                  "file_name": name, "file_size": 2000}}
+        await self._feed({"message": self._msg(uid, **extra)})
 
     def last_text(self):
         return [c for c in self.session.calls if not isinstance(c, AnswerCallbackQuery) and getattr(c, "text", None)][-1].text
@@ -136,11 +146,12 @@ def test_album_variant_and_calculator(db):
         await h.say("Калькулятор")
         await h.tap("oi:c:3")
         await h.tap("oi:s:4")
-        await h.tap("oi:v:4:2")                # двухсторонняя, 55 ₸
-        await h.say("2")
+        await h.tap("oi:v:4:2")                # двухсторонняя, 55 ₸ за лист
+        assert "страниц" in h.last_text()
+        await h.say("10")                      # 10 страниц → 5 листов
         return h.last_text()
     text = run(scenario())
-    assert "Итого: 110 ₸" in text
+    assert "5 лист × 55 ₸ = 275 ₸" in text and "(10 стр.)" in text and "Итого: 275 ₸" in text
     with session_scope() as s:
         assert s.query(Order).count() == 0     # калькулятор ничего не сохраняет
 

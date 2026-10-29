@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import Order
 from ..money import fmt_money, fmt_qty
-from ..services import balance, clients as client_svc, orders as order_svc
+from ..services import attachments, balance, clients as client_svc, orders as order_svc
 from ..services.calc import CALC_TYPES
 
 
@@ -35,7 +35,32 @@ def order_text(s: Session, order: Order) -> str:
         if t["written_off"]:
             lines.append(f"Списано: {fmt_money(t['written_off'])}")
         lines.append(f"Долг: {fmt_money(t['debt'])}")
+    lines += _proof_lines(s, order)
     return "\n".join(lines)
+
+
+def _proof_lines(s: Session, order: Order) -> list[str]:
+    """Что клиент прислал и чем подтверждена оплата — чтобы быстро ответить «я не платил»."""
+    out = []
+    files = attachments.for_order(s, order.id)
+    if files:
+        out.append("\nФайлы клиента:")
+        for a in files:
+            name = a.file_name or ("фото" if a.media == "photo" else "файл")
+            out.append(f"  {name} — " + (f"хранится до {attachments.expires_on(a):%d.%m}" if a.file_id
+                                         else "файл удалён, запись осталась"))
+    pays = attachments.order_payments(s, order.id)
+    if pays:
+        out.append("\nОплаты по заказу:")
+        for p, amount, receipts in pays:
+            if any(r.file_id for r in receipts):
+                mark = "чек сохранён"
+            elif receipts:
+                mark = "чек был, файл удалён"
+            else:
+                mark = "без чека"
+            out.append(f"  {p.created_at:%d.%m.%Y %H:%M} — {fmt_money(amount)} ({mark})")
+    return out
 
 
 def client_text(s: Session, client_id: int) -> str:
@@ -61,9 +86,12 @@ def service_text(sv) -> str:
     lines = [sv.name, f"Категория: {sv.category.name}",
              f"Расчёт: {CALC_TYPES[sv.calc_type].title}", f"Единица: {sv.unit}",
              f"Цена: {price_label(sv)}", f"Статус: {st}"]
+    if sv.calc_type != "fixed" and sv.pages_per_sheet > 1:
+        lines.append(f"Двусторонняя: вводятся страницы, {sv.pages_per_sheet} стр. на лист")
     vs = [v for v in sv.variants]
     if vs:
         lines.append("Варианты:")
         for v in vs:
-            lines.append(f"  {'✓' if v.is_active else '✗'} {v.name} — {price_label(sv, v.price_minor)}")
+            lines.append(f"  {'✓' if v.is_active else '✗'} {v.name} — {price_label(sv, v.price_minor)}"
+                         + (f", {v.pages_per_sheet} стр. на лист" if v.pages_per_sheet > 1 else ""))
     return "\n".join(lines)

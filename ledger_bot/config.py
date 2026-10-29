@@ -15,6 +15,7 @@ class Config:
     owner_ids: frozenset
     database_path: str
     backup_dir: Path
+    file_retention_days: int = 14
 
 
 def load_config() -> Config:
@@ -29,4 +30,5 @@ def load_config() -> Config:
         owner_ids=frozenset(owners),
         database_path=os.getenv("DATABASE_PATH", "data/ledger.db"),
         backup_dir=Path(os.getenv("BACKUP_DIR", "data/backups")),
+        file_retention_days=max(1, int(os.getenv("FILE_RETENTION_DAYS", "14"))),
     )

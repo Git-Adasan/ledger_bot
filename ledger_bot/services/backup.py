@@ -27,6 +27,10 @@ def create_backup(db_path: str, backup_dir: Path, keep: int = 30) -> Path:
     return dest
 
 
+# таблицы, добавленные позже: в старых копиях их нет, при восстановлении они создаются заново
+OPTIONAL_TABLES = {"attachments"}
+
+
 def validate_db_file(path: Path) -> None:
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -38,7 +42,7 @@ def validate_db_file(path: Path) -> None:
             con.close()
     except sqlite3.DatabaseError:
         raise ServiceError("Это не файл базы SQLite.")
-    missing = set(Base.metadata.tables) - tables
+    missing = set(Base.metadata.tables) - OPTIONAL_TABLES - tables
     if missing:
         raise ServiceError("Файл не похож на копию этого бота (нет таблиц: "
                            + ", ".join(sorted(missing)) + ").")

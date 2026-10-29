@@ -21,6 +21,24 @@ class Line:
     total_minor: int
 
 
+def pages_to_sheets(sv, variant, qty_milli: int) -> tuple[int, str]:
+    """Что считать в заказе: (количество для расчёта, пояснение к названию).
+
+    Обычные услуги: введённое количество как есть.
+    Двусторонняя печать (2 страницы на лист): вводят СТРАНИЦЫ, листов = страницы / 2 с округлением
+    вверх (нечётная последняя страница всё равно занимает целый лист). Цена умножается на листы.
+    """
+    pps = catalog.pages_per_sheet(sv, variant)
+    if pps <= 1:
+        validate_qty(sv.calc_type, qty_milli)
+        return qty_milli, ""
+    if qty_milli % 1000:
+        raise ServiceError("Страниц должно быть целое число.")
+    pages = qty_milli // 1000
+    sheets = -(-pages // pps)
+    return sheets * 1000, f" ({pages} стр.)"
+
+
 def build_lines(s: Session, items: list[dict]) -> list[Line]:
     """items: [{'sid':…, 'vid':…|None, 'qty': milli}] → строки с текущими ценами каталога."""
     if not items:
@@ -38,11 +56,11 @@ def build_lines(s: Session, items: list[dict]) -> list[Line]:
                 raise ServiceError(f"Вариант услуги «{sv.name}» недоступен.")
         elif variants:
             raise ServiceError(f"Для «{sv.name}» нужно выбрать вариант.")
-        validate_qty(sv.calc_type, it["qty"])
+        qty, note = pages_to_sheets(sv, variant, it["qty"])
         price = variant.price_minor if variant else sv.price_minor
-        name = f"{sv.name} — {variant.name}" if variant else sv.name
-        lines.append(Line(sv.id, variant.id if variant else None, name, it["qty"],
-                          sv.unit, price, line_total(price, it["qty"])))
+        name = (f"{sv.name} — {variant.name}" if variant else sv.name) + note
+        lines.append(Line(sv.id, variant.id if variant else None, name, qty,
+                          sv.unit, price, line_total(price, qty)))
     return lines
 
 

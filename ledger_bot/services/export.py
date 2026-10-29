@@ -5,14 +5,14 @@ import zipfile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models import (Adjustment, Client, Order, OrderItem, Payment, PaymentAllocation,
-                         Service, Transaction)
+from ..db.models import (Adjustment, Attachment, Client, Order, OrderItem, Payment,
+                         PaymentAllocation, Service, Transaction)
 
 TABLES = {
     "clients.csv": Client, "services.csv": Service, "orders.csv": Order,
     "order_items.csv": OrderItem, "payments.csv": Payment,
     "payment_allocations.csv": PaymentAllocation, "adjustments.csv": Adjustment,
-    "transactions.csv": Transaction,
+    "transactions.csv": Transaction, "attachments.csv": Attachment,
 }
 
 

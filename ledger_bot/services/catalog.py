@@ -52,7 +52,21 @@ def get_service(s: Session, service_id: int) -> Service:
     return sv
 
 
-def create_service(s: Session, name, category_id, calc_type, unit, price_minor) -> Service:
+def _pps(value) -> int:
+    if not isinstance(value, int) or not 1 <= value <= 4:
+        raise ServiceError("Страниц на листе: число от 1 до 4.")
+    return value
+
+
+def pages_per_sheet(sv: Service, variant: ServiceVariant | None = None) -> int:
+    """Сколько страниц помещается на один лист (2 — двусторонняя печать). Для фиксированной цены всегда 1."""
+    if sv.calc_type == "fixed":
+        return 1
+    return (variant.pages_per_sheet if variant is not None else sv.pages_per_sheet) or 1
+
+
+def create_service(s: Session, name, category_id, calc_type, unit, price_minor,
+                   pages_per_sheet: int = 1) -> Service:
     if calc_type not in CALC_TYPES:
         raise ServiceError("Неизвестный способ расчёта.")
     if not s.get(Category, category_id):
@@ -63,15 +77,17 @@ def create_service(s: Session, name, category_id, calc_type, unit, price_minor) 
     if not unit or len(unit) > 24:
         raise ServiceError("Единица измерения: от 1 до 24 символов.")
     sv = Service(name=_name(name), category_id=category_id, calc_type=calc_type,
-                 unit=unit, price_minor=price_minor)
+                 unit=unit, price_minor=price_minor, pages_per_sheet=_pps(pages_per_sheet))
     s.add(sv)
     s.flush()
     return sv
 
 
 def update_service(s: Session, service_id: int, *, name=None, unit=None,
-                   price_minor=None, calc_type=None) -> Service:
+                   price_minor=None, calc_type=None, pages_per_sheet=None) -> Service:
     sv = get_service(s, service_id)
+    if pages_per_sheet is not None:
+        sv.pages_per_sheet = _pps(pages_per_sheet)
     if name is not None:
         sv.name = _name(name)
     if unit is not None:
@@ -130,11 +146,13 @@ def active_variants(sv: Service) -> list[ServiceVariant]:
     return [v for v in sv.variants if v.is_active]
 
 
-def add_variant(s: Session, service_id: int, name: str, price_minor: int) -> ServiceVariant:
+def add_variant(s: Session, service_id: int, name: str, price_minor: int,
+                pages_per_sheet: int = 1) -> ServiceVariant:
     sv = get_service(s, service_id)
     if price_minor <= 0:
         raise ServiceError("Цена должна быть больше нуля.")
-    v = ServiceVariant(service_id=sv.id, name=_name(name), price_minor=price_minor)
+    v = ServiceVariant(service_id=sv.id, name=_name(name), price_minor=price_minor,
+                       pages_per_sheet=_pps(pages_per_sheet))
     s.add(v)
     s.flush()
     return v
@@ -147,8 +165,11 @@ def get_variant(s: Session, variant_id: int) -> ServiceVariant:
     return v
 
 
-def update_variant(s: Session, variant_id: int, *, name=None, price_minor=None, active=None):
+def update_variant(s: Session, variant_id: int, *, name=None, price_minor=None, active=None,
+                   pages_per_sheet=None):
     v = get_variant(s, variant_id)
+    if pages_per_sheet is not None:
+        v.pages_per_sheet = _pps(pages_per_sheet)
     if name is not None:
         v.name = _name(name)
     if price_minor is not None:
@@ -168,8 +189,8 @@ def seed_defaults(s: Session) -> None:
     con = create_category(s, "Конспекты")
     alb = create_category(s, "Альбомы")
     create_service(s, "Односторонняя печать", prt.id, "sheet", "лист", 3500)
-    create_service(s, "Двухсторонняя печать", prt.id, "sheet", "лист", 5500)
+    create_service(s, "Двухсторонняя печать", prt.id, "sheet", "лист", 5500, pages_per_sheet=2)
     create_service(s, "Конспект", con.id, "copy", "экз.", 20000)
     a = create_service(s, "Альбом по гистологии", alb.id, "sheet", "лист", 3500)
     add_variant(s, a.id, "Односторонняя печать", 3500)
-    add_variant(s, a.id, "Двухсторонняя печать", 5500)
+    add_variant(s, a.id, "Двухсторонняя печать", 5500, pages_per_sheet=2)
